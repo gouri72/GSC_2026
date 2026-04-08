@@ -1,5 +1,5 @@
 "use client";
-import { auth } from "@/lib/firebase";
+import { auth } from "../lib/firebase";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -17,9 +17,27 @@ export default function RegisterPage() {
   }, [user, loading, router]);
 
   const handleRegister = async () => {
-    if (!text.trim() || !title.trim()) return;
-    setStatus("Registering... (backend coming in Phase 3)");
-    console.log("Will send:", { title, text });
+    if (!text.trim() || !title.trim() || !user) return;
+    setStatus("Registering...");
+    
+    try {
+      const res = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, text, userId: user.uid }),
+      });
+      
+      const data = await res.json();
+      
+      if (res.ok && data.success) {
+        setStatus(`Success! Document recorded. Doc ID: ${data.docId}`);
+      } else {
+        setStatus(`Error: ${data.error || "Something went wrong"}`);
+      }
+    } catch (e) {
+      console.error(e);
+      setStatus("Failed to communicate with our server.");
+    }
   };
 
   if (loading || !user) return <div className="p-8">Loading...</div>;

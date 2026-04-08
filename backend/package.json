@@ -12,6 +12,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google-cloud/aiplatform": "^6.5.0",
+    "@google-cloud/firestore": "^8.3.0",
     "@google-cloud/vertexai": "^1.10.4",
     "@types/cors": "^2.8.19",
     "cors": "^2.8.6",

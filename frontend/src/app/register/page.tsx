@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../lib/firebase"; 
-import { signOut } from "firebase/auth"; // <-- Added signOut import
+import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 
 export default function AuraInterface() {
@@ -25,7 +25,7 @@ export default function AuraInterface() {
     }
   }, [user, userLoading, router]);
 
-  // <-- ADDED LOGOUT FUNCTION -->
+  // Logout Handler
   const handleLogout = async () => {
     try {
       await signOut(auth);
@@ -35,6 +35,7 @@ export default function AuraInterface() {
     }
   };
 
+  // Main Processing Handler
   const handleProcess = async () => {
     if (!user) return;
     
@@ -45,21 +46,43 @@ export default function AuraInterface() {
     setStatus(mode === "register" ? "Extracting Semantic Shadows..." : "Analyzing Linguistics...");
 
     try {
+      // 1. Grab the secure Firebase ID token for the backend!
+      const token = await user.getIdToken();
+
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          // 2. Inject the VIP pass so your backend doesn't reject the request
+          "Authorization": `Bearer ${token}` 
+        },
         body: JSON.stringify({
           title: title || "Untitled Analysis",
           text,
-          userId: user.uid, 
           isOG: mode === "register"
         }),
       });
 
       const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Analysis failed");
+      }
+
       setResults(data);
-    } catch (err) {
-      alert("Analysis failed. Please check your connection.");
+
+      // 3. The Redirect Logic!
+      if (data.success && mode === "register") {
+        // Wait 2.5 seconds so they can see the "Aura Locked" animation
+        setTimeout(() => {
+          // You can change '/vault' to '/' if you just want to go back to the home page
+          router.push(`/vault`); 
+        }, 2500);
+      }
+
+    } catch (err: any) {
+      console.error(err);
+      alert(`Error: ${err.message}`);
     } finally {
       setLoading(false);
       setStatus("");
@@ -77,7 +100,6 @@ export default function AuraInterface() {
            <p className="text-gray-500 text-sm">Semantic Plagiarism Engine • GSC 2026</p>
         </div>
         
-        {/* <-- ADDED SIGNOUT UI HERE --> */}
         <div className="text-right flex flex-col items-end">
             <p className="text-xs font-bold text-gray-400 uppercase">Authenticated As</p>
             <p className="text-sm font-medium">{user.displayName || user.email}</p>
@@ -142,7 +164,7 @@ export default function AuraInterface() {
         </button>
       </div>
 
-      {/* RESULTS SECTION */}
+      {/* RESULTS SECTION (VERIFY MODE) */}
       {results && mode === "verify" && (
         <div className="mt-12 space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-500">
           <div className={`p-8 rounded-3xl border-l-8 shadow-xl ${results.overallVerdict === 'PLAGIARISM DETECTED' ? 'border-red-500 bg-white' : 'border-emerald-500 bg-white'}`}>
@@ -178,6 +200,7 @@ export default function AuraInterface() {
         </div>
       )}
 
+      {/* RESULTS SECTION (REGISTER MODE) */}
       {results && mode === "register" && (
         <div className="mt-8 p-10 bg-emerald-50 rounded-3xl text-center border-2 border-emerald-100 animate-in zoom-in duration-300">
           <div className="w-16 h-16 bg-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-200">
@@ -185,6 +208,11 @@ export default function AuraInterface() {
           </div>
           <p className="text-emerald-900 font-black text-2xl">Aura Locked</p>
           <p className="text-emerald-600 font-medium mt-1">Your work is now registered and protected.</p>
+          {results.certificatePreview && (
+            <p className="text-xs text-emerald-400 font-mono mt-4 break-all max-w-sm mx-auto">
+              Sig: {results.certificatePreview}
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useAuthState } from "react-firebase-hooks/auth";
 import { auth } from "../lib/firebase"; 
+import { signOut } from "firebase/auth"; // <-- Added signOut import
 import { useRouter } from "next/navigation";
 
 export default function AuraInterface() {
@@ -24,6 +25,16 @@ export default function AuraInterface() {
     }
   }, [user, userLoading, router]);
 
+  // <-- ADDED LOGOUT FUNCTION -->
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      router.push("/");
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
+  };
+
   const handleProcess = async () => {
     if (!user) return;
     
@@ -40,7 +51,7 @@ export default function AuraInterface() {
         body: JSON.stringify({
           title: title || "Untitled Analysis",
           text,
-          userId: user.uid, // Dynamic ID from Auth
+          userId: user.uid, 
           isOG: mode === "register"
         }),
       });
@@ -65,9 +76,17 @@ export default function AuraInterface() {
            <h1 className="text-4xl font-black text-indigo-600 tracking-tighter">AURA</h1>
            <p className="text-gray-500 text-sm">Semantic Plagiarism Engine • GSC 2026</p>
         </div>
-        <div className="text-right">
+        
+        {/* <-- ADDED SIGNOUT UI HERE --> */}
+        <div className="text-right flex flex-col items-end">
             <p className="text-xs font-bold text-gray-400 uppercase">Authenticated As</p>
             <p className="text-sm font-medium">{user.displayName || user.email}</p>
+            <button 
+              onClick={handleLogout} 
+              className="text-xs text-red-500 hover:text-red-700 font-bold transition-colors mt-1 px-3 py-1 border border-red-100 hover:bg-red-50 rounded shadow-sm"
+            >
+              Sign Out
+            </button>
         </div>
       </header>
 

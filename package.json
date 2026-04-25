@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@google-cloud/kms": "^5.4.0"
+  }
+}

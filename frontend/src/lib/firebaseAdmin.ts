@@ -1,25 +1,22 @@
-
 import admin from "firebase-admin";
 
+const isBuildPhase = process.env.NEXT_PHASE === "true";
 const serviceAccountVar = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
 
-// Only initialize if we aren't already initialized AND we have the key
-if (!admin.apps.length) {
-  if (serviceAccountVar) {
-    try {
-      const serviceAccount = JSON.parse(serviceAccountVar);
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-      });
-      console.log("Firebase Admin initialized successfully.");
-    } catch (e) {
-      console.error("Firebase Admin init failed:", e);
-    }
-  } else {
-    // This is what will happen during the Google Cloud Build
-    console.warn("Skipping Firebase initialization: FIREBASE_SERVICE_ACCOUNT_JSON is missing.");
+if (!admin.apps.length && !isBuildPhase && serviceAccountVar) {
+  try {
+    const serviceAccount = JSON.parse(serviceAccountVar);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+  } catch (e) {
+    console.error("Firebase init failed:", e);
   }
 }
 
-export const db = admin.firestore();
+// During build phase, we export a proxy or null to prevent the "no-app" error
+export const db = (!isBuildPhase && admin.apps.length) 
+  ? admin.firestore() 
+  : {} as admin.firestore.Firestore; 
+
 export default admin;

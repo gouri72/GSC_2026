@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import admin, { db } from "@/lib/firebaseAdmin";
 
+export const dynamic = 'force-dynamic';
 export async function GET() {
     // Grab the first chunk from any document
     const snapshot = await db.collectionGroup("chunks").limit(1).get();

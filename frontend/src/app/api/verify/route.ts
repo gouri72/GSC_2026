@@ -4,38 +4,43 @@ import admin from "firebase-admin";
 import { GoogleAuth } from "google-auth-library";
 
 export const dynamic = 'force-dynamic';
-// 1. Parse the JSON string directly from the .env file
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON as string);
 
-// 2. Initialize Firebase manually using the parsed credentials
-if (!admin.apps.length) {
-  try {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-  } catch (error) {
-    console.error('Firebase initialization error:', error);
-  }
+// --- LAZY INIT HELPERS ---
+function getServiceAccount() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!raw) throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON is not set");
+  return JSON.parse(raw);
 }
 
-const db = admin.firestore();
-
-// 3. Initialize Vertex AI manually
-const vertexAI = new VertexAI({
-  project: process.env.GCP_PROJECT_ID as string,
-  location: 'us-central1',
-  googleAuthOptions: {
-    credentials: {
-      client_email: serviceAccount.client_email,
-      private_key: serviceAccount.private_key,
+function initFirebase(serviceAccount: any) {
+  if (!admin.apps.length) {
+    try {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+      });
+    } catch (error) {
+      console.error('Firebase initialization error:', error);
     }
   }
-});
+  return admin.firestore();
+}
 
-const generativeModel = vertexAI.getGenerativeModel({
-  model: 'gemini-2.5-flash',
-  generationConfig: { responseMimeType: "application/json" }
-});
+function initVertexAI(serviceAccount: any) {
+  const vertexAI = new VertexAI({
+    project: process.env.GCP_PROJECT_ID as string,
+    location: 'us-central1',
+    googleAuthOptions: {
+      credentials: {
+        client_email: serviceAccount.client_email,
+        private_key: serviceAccount.private_key,
+      }
+    }
+  });
+  return vertexAI.getGenerativeModel({
+    model: 'gemini-2.5-flash',
+    generationConfig: { responseMimeType: "application/json" }
+  });
+}
 
 // --- HELPER FUNCTIONS ---
 function chunkText(text: string, size = 500, overlap = 100): string[] {
@@ -61,9 +66,8 @@ function shadowToText(shadow: any): string {
   ].join(" ");
 }
 
-// 4. Manually authenticate the Vector API request
-async function getAccessToken(): Promise<string> {
-  const auth = new GoogleAuth({ 
+async function getAccessToken(serviceAccount: any): Promise<string> {
+  const auth = new GoogleAuth({
     scopes: "https://www.googleapis.com/auth/cloud-platform",
     credentials: {
       client_email: serviceAccount.client_email,
@@ -75,10 +79,9 @@ async function getAccessToken(): Promise<string> {
   return token.token!;
 }
 
-// Generate the 768-dimensional vector
-async function getEmbedding(shadow: any): Promise<number[]> {
+async function getEmbedding(shadow: any, serviceAccount: any): Promise<number[]> {
   const text = shadowToText(shadow);
-  const accessToken = await getAccessToken();
+  const accessToken = await getAccessToken(serviceAccount);
   const response = await fetch(
     `https://us-central1-aiplatform.googleapis.com/v1/projects/${process.env.GCP_PROJECT_ID}/locations/us-central1/publishers/google/models/text-multilingual-embedding-002:predict`,
     {
@@ -94,8 +97,7 @@ async function getEmbedding(shadow: any): Promise<number[]> {
   return data.predictions[0].embeddings.values;
 }
 
-// Extract Semantic Shadow
-async function extractShadow(chunk: string) {
+async function extractShadow(chunk: string, generativeModel: any) {
   const prompt = `You are 'Aura', an advanced forensic linguistics engine. 
   Extract the 'Semantic Shadow' of the provided text.
   CRITICAL: Translate all extracted concepts into English, regardless of the input language.
@@ -123,6 +125,11 @@ const PLAGIARISM_THRESHOLD = 80;
 // --- MAIN POST HANDLER ---
 export async function POST(req: Request) {
   try {
+    // ALL initialization happens here at runtime ✅
+    const serviceAccount = getServiceAccount();
+    const db = initFirebase(serviceAccount);
+    const generativeModel = initVertexAI(serviceAccount);
+
     const { text } = await req.json();
     if (!text) return NextResponse.json({ error: "text is required" }, { status: 400 });
 
@@ -130,20 +137,19 @@ export async function POST(req: Request) {
     const results = [];
 
     for (const [i, chunk] of chunks.entries()) {
-      const shadow = await extractShadow(chunk);
-      const embedding = await getEmbedding(shadow);
+      const shadow = await extractShadow(chunk, generativeModel);
+      const embedding = await getEmbedding(shadow, serviceAccount);
 
       console.log(`\n--- [Chunk ${i}] STARTING VECTOR SEARCH ---`);
       console.log(`Vector dimension generated: ${embedding.length} (Should be 768)`);
 
-      // 1. Vector Search against the "chunks" Subcollection
       const querySnapshot = await db.collectionGroup("chunks")
         .findNearest({
           vectorField: "embedding",
           queryVector: admin.firestore.FieldValue.vector(embedding),
           distanceMeasure: "COSINE",
           limit: 1,
-          distanceResultField: "computedDistance" 
+          distanceResultField: "computedDistance"
         })
         .get();
 
@@ -156,13 +162,12 @@ export async function POST(req: Request) {
       } else {
         const topDoc = querySnapshot.docs[0];
         const topData = topDoc.data();
-        
+
         console.log(`✅ MATCH FOUND! Document path: ${topDoc.ref.path}`);
         console.log(`Raw computed distance from DB:`, topData.computedDistance);
 
-        // 2. Proper Math Normalization
-        const distance: number = topData.computedDistance; 
-        
+        const distance: number = topData.computedDistance;
+
         if (distance === undefined) {
           console.log(`⚠️ WARNING: Distance is undefined! Math will fail.`);
         }
@@ -171,7 +176,7 @@ export async function POST(req: Request) {
         console.log(`Calculated Score: ${score}%`);
 
         const parentDoc = await topDoc.ref.parent.parent?.get();
-        
+
         highestMatch = {
           score: parseFloat(score.toFixed(1)),
           docId: parentDoc?.id || "unknown",
@@ -186,7 +191,7 @@ export async function POST(req: Request) {
         highestMatch
       });
 
-      if (i < chunks.length - 1) await delay(4000); 
+      if (i < chunks.length - 1) await delay(4000);
     }
 
     const isPlagiarised = results.some(r => r.highestMatch.flagged);

@@ -16,7 +16,7 @@ export default function AuraInterface() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState(""); 
   const [results, setResults] = useState<any>(null);
-  const [mode, setMode] = useState<"register" | "verify">("verify");
+  const [mode, setMode] = useState<"register" | "verify">("register");
 
   // Redirect if not logged in
   useEffect(() => {
@@ -80,9 +80,9 @@ export default function AuraInterface() {
         }, 2500);
       }
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      alert(`Error: ${err.message}`);
+      alert(`Error: ${(err as Error).message}`);
     } finally {
       setLoading(false);
       setStatus("");
@@ -172,7 +172,7 @@ export default function AuraInterface() {
               {results.overallVerdict}
             </h2>
             <div className="flex items-baseline gap-2">
-               <span className="text-5xl font-black text-gray-900">{results.results?.[0]?.highestMatch?.score || 0}%</span>
+               <span className="text-5xl font-black text-gray-900">{results.results?.length ? Math.max(...results.results.map((r: any) => r.highestMatch?.score || 0)) : 0}%</span>
                <span className="text-gray-400 font-bold">Similarity Index</span>
             </div>
           </div>
@@ -188,7 +188,7 @@ export default function AuraInterface() {
                    </span>
                 </div>
                 <p className="text-sm text-gray-600 leading-relaxed italic border-l-2 border-indigo-100 pl-4">
-                    "{res.shadow.core_thesis}"
+                    &quot;{res.shadow.core_thesis}&quot;
                 </p>
                 <div className="mt-3 pt-3 border-t border-gray-50 flex justify-between text-[11px]">
                     <span className="text-gray-400 font-medium">Source: <span className="text-gray-700">{res.highestMatch.title}</span></span>

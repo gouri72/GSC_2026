@@ -4,7 +4,7 @@ import admin from "firebase-admin";
 import { GoogleAuth } from "google-auth-library";
 import { KeyManagementServiceClient } from "@google-cloud/kms";
 import * as crypto from "crypto";
-
+export const dynamic = 'force-dynamic';
 // ─── Service Account ──────────────────────────────────────────────────────────
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON as string);
 

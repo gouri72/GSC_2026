@@ -3,6 +3,7 @@ import { VertexAI } from "@google-cloud/vertexai";
 import admin from "firebase-admin";
 import { GoogleAuth } from "google-auth-library";
 
+export const dynamic = 'force-dynamic';
 // 1. Parse the JSON string directly from the .env file
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON as string);
 

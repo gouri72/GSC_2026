@@ -5,41 +5,44 @@ import { GoogleAuth } from "google-auth-library";
 
 export const dynamic = 'force-dynamic';
 
-// --- LAZY INIT HELPERS ---
-function getServiceAccount() {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  if (!raw) throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON is not set");
-  return JSON.parse(raw);
-}
+// ─── Build Phase Safeguard ────────────────────────────────────────────────────
+const isBuildPhase = process.env.NEXT_PHASE === "true" || !process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
 
-function initFirebase(serviceAccount: any) {
-  if (!admin.apps.length) {
-    try {
+let serviceAccount: any = {};
+let db: any = {};
+let generativeModel: any = null;
+
+if (!isBuildPhase) {
+  try {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON as string);
+
+    if (!admin.apps.length) {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
       });
-    } catch (error) {
-      console.error('Firebase initialization error:', error);
     }
-  }
-  return admin.firestore();
-}
+    db = admin.firestore();
 
-function initVertexAI(serviceAccount: any) {
-  const vertexAI = new VertexAI({
-    project: process.env.GCP_PROJECT_ID as string,
-    location: 'us-central1',
-    googleAuthOptions: {
-      credentials: {
-        client_email: serviceAccount.client_email,
-        private_key: serviceAccount.private_key,
+    const vertexAI = new VertexAI({
+      project: process.env.GCP_PROJECT_ID as string,
+      location: 'us-central1',
+      googleAuthOptions: {
+        credentials: {
+          client_email: serviceAccount.client_email,
+          private_key: serviceAccount.private_key,
+        }
       }
-    }
-  });
-  return vertexAI.getGenerativeModel({
-    model: 'gemini-2.5-flash',
-    generationConfig: { responseMimeType: "application/json" }
-  });
+    });
+
+    generativeModel = vertexAI.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: { responseMimeType: "application/json" }
+    });
+  } catch (error) {
+    console.error('Initialization error during live startup:', error);
+  }
+} else {
+  console.warn("Build phase detected: Skipping Verify route initialization.");
 }
 
 // --- HELPER FUNCTIONS ---
@@ -66,8 +69,8 @@ function shadowToText(shadow: any): string {
   ].join(" ");
 }
 
-async function getAccessToken(serviceAccount: any): Promise<string> {
-  const auth = new GoogleAuth({
+async function getAccessToken(): Promise<string> {
+  const auth = new GoogleAuth({ 
     scopes: "https://www.googleapis.com/auth/cloud-platform",
     credentials: {
       client_email: serviceAccount.client_email,
@@ -79,9 +82,9 @@ async function getAccessToken(serviceAccount: any): Promise<string> {
   return token.token!;
 }
 
-async function getEmbedding(shadow: any, serviceAccount: any): Promise<number[]> {
+async function getEmbedding(shadow: any): Promise<number[]> {
   const text = shadowToText(shadow);
-  const accessToken = await getAccessToken(serviceAccount);
+  const accessToken = await getAccessToken();
   const response = await fetch(
     `https://us-central1-aiplatform.googleapis.com/v1/projects/${process.env.GCP_PROJECT_ID}/locations/us-central1/publishers/google/models/text-multilingual-embedding-002:predict`,
     {
@@ -97,7 +100,7 @@ async function getEmbedding(shadow: any, serviceAccount: any): Promise<number[]>
   return data.predictions[0].embeddings.values;
 }
 
-async function extractShadow(chunk: string, generativeModel: any) {
+async function extractShadow(chunk: string) {
   const prompt = `You are 'Aura', an advanced forensic linguistics engine. 
   Extract the 'Semantic Shadow' of the provided text.
   CRITICAL: Translate all extracted concepts into English, regardless of the input language.
@@ -124,12 +127,11 @@ const PLAGIARISM_THRESHOLD = 80;
 
 // --- MAIN POST HANDLER ---
 export async function POST(req: Request) {
-  try {
-    // ALL initialization happens here at runtime ✅
-    const serviceAccount = getServiceAccount();
-    const db = initFirebase(serviceAccount);
-    const generativeModel = initVertexAI(serviceAccount);
+  if (isBuildPhase) {
+    return NextResponse.json({ status: "Build Phase OK" });
+  }
 
+  try {
     const { text } = await req.json();
     if (!text) return NextResponse.json({ error: "text is required" }, { status: 400 });
 
@@ -137,8 +139,8 @@ export async function POST(req: Request) {
     const results = [];
 
     for (const [i, chunk] of chunks.entries()) {
-      const shadow = await extractShadow(chunk, generativeModel);
-      const embedding = await getEmbedding(shadow, serviceAccount);
+      const shadow = await extractShadow(chunk);
+      const embedding = await getEmbedding(shadow);
 
       console.log(`\n--- [Chunk ${i}] STARTING VECTOR SEARCH ---`);
       console.log(`Vector dimension generated: ${embedding.length} (Should be 768)`);
@@ -149,7 +151,7 @@ export async function POST(req: Request) {
           queryVector: admin.firestore.FieldValue.vector(embedding),
           distanceMeasure: "COSINE",
           limit: 1,
-          distanceResultField: "computedDistance"
+          distanceResultField: "computedDistance" 
         })
         .get();
 
@@ -162,21 +164,14 @@ export async function POST(req: Request) {
       } else {
         const topDoc = querySnapshot.docs[0];
         const topData = topDoc.data();
-
+        
         console.log(`✅ MATCH FOUND! Document path: ${topDoc.ref.path}`);
-        console.log(`Raw computed distance from DB:`, topData.computedDistance);
-
-        const distance: number = topData.computedDistance;
-
-        if (distance === undefined) {
-          console.log(`⚠️ WARNING: Distance is undefined! Math will fail.`);
-        }
-
+        
+        const distance: number = topData.computedDistance; 
         const score = (1 - (distance / 2)) * 100;
-        console.log(`Calculated Score: ${score}%`);
-
+        
         const parentDoc = await topDoc.ref.parent.parent?.get();
-
+        
         highestMatch = {
           score: parseFloat(score.toFixed(1)),
           docId: parentDoc?.id || "unknown",
@@ -191,7 +186,7 @@ export async function POST(req: Request) {
         highestMatch
       });
 
-      if (i < chunks.length - 1) await delay(4000);
+      if (i < chunks.length - 1) await delay(4000); 
     }
 
     const isPlagiarised = results.some(r => r.highestMatch.flagged);

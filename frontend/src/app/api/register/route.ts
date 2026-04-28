@@ -178,21 +178,30 @@ async function getEmbedding(shadow: any): Promise<number[]> {
   return embedding;
 }
 
+// ... (keep all imports and initializations above the same)
+
 // ─── KMS Signature Engine ─────────────────────────────────────────────────────
 async function generateOwnershipSignature(documentData: string): Promise<string> {
-  const versionName = kmsClient.cryptoKeyVersionPath(
-    process.env.GCP_PROJECT_ID as string,
-    "us-central1",
-    "aura-vault-ring",
-    "ownership-signature-key",
-    "1"
-  );
+  // Use the direct resource path string to avoid SDK formatting errors
+  const versionName = `projects/${process.env.GCP_PROJECT_ID}/locations/us-central1/keyRings/aura-vault-ring/cryptoKeys/ownership-signature-key/cryptoKeyVersions/1`;
+  
   const digest = crypto.createHash("sha256").update(documentData).digest();
-  const [signResponse] = await kmsClient.asymmetricSign({
-    name: versionName,
-    digest: { sha256: digest },
-  });
-  return Buffer.from(signResponse.signature as Uint8Array).toString("base64");
+  
+  try {
+    const [signResponse] = await kmsClient.asymmetricSign({
+      name: versionName,
+      digest: { sha256: digest },
+    });
+    
+    if (!signResponse.signature) {
+      throw new Error("KMS returned an empty signature.");
+    }
+
+    return Buffer.from(signResponse.signature as Uint8Array).toString("base64");
+  } catch (error: any) {
+    console.error("[KMS Engine Error]:", error.message);
+    throw new Error(`KMS Signing Failed: ${error.message}`);
+  }
 }
 
 // ─── Main POST Handler ────────────────────────────────────────────────────────
@@ -239,6 +248,7 @@ export async function POST(req: Request) {
     });
 
     console.log("[KMS] Generating ownership signature...");
+    // This call now uses the hardcoded path for stability
     const digitalSignature = await generateOwnershipSignature(documentFingerprint);
     console.log("[KMS] Ownership certificate generated successfully.");
 
@@ -272,6 +282,7 @@ export async function POST(req: Request) {
       console.log(`[Chunk ${i + 1}/${chunks.length}] Stored successfully.`);
       chunksProcessed++;
 
+      // Rate limiting delay for Google APIs
       if (i < chunks.length - 1) await delay(4000);
     }
 
@@ -280,13 +291,14 @@ export async function POST(req: Request) {
       docId: parentDocRef.id,
       chunksProcessed,
       registeredBy: userEmail,
+      ownershipSignature: digitalSignature, // Send full signature for UI
       certificatePreview: digitalSignature.substring(0, 40) + "...",
     });
 
   } catch (err: any) {
     console.error("[Register] Unhandled error:", err);
     return NextResponse.json(
-      { error: "Vault registration failed", detail: err.message },
+      { error: "Vault registration failed", details: err.message },
       { status: 500 }
     );
   }
